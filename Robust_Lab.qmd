@@ -245,6 +245,16 @@ Use the `stars` data in `robustbase`. This data looks at the relationship betwee
     ```{r}
     #read data.table to read in
     chili<- read.delim("https://raw.githubusercontent.com/jgeller112/psy504-advanced-stats/main/slides/03-Robust_Methods/data/chillis.csv")
+
+    boot.function <- function(data, indices) {
+    resampled_data = data[indices,]
+    model<-glm(HEAT ~ LENGTH, data = resampled_data)
+    return(coefficients(model))
+    }
+
+    chili_results <- boot(chili, boot.function, R = 10000)
+
+    boot.ci(chili_results, type = "bca", R = 10000)
     ```
 
 5.  Some species display sexual size dimorphism -- in which one sex is on average larger than the other. Such a pattern can tell us about the species' ecology and mating habits. Do penguins display this sex difference in size? Let's just look at a subset of the palmerpenguins data set, which we'll call `my_penguins`.
@@ -375,6 +385,12 @@ df %>% ggplot(aes(hours, score)) +
   xlab("Hours")
 ```
 
+**Formal tests reveal that the assumption is violated**:
+
+```{r}
+performance::check_heteroscedasticity(mod)
+```
+
 ## Normality of Residuals
 
 ```{r}
@@ -382,7 +398,11 @@ df %>% ggplot(aes(hours, score)) +
 performance::check_model(mod, check = c("qq", "normality"))
 ```
 
-**These plots suggest that a second assumption, the normality of residuals, is also being violated by our current model. The Q-Q plot suggests that the majority of points do not fall along the straight line and that, as a result, the model is making poorer predictions for those values. Additionally, the density plot does not appear to follow a normal distribution (although a Shaprio-Wilk test returns a p \> .05).**
+**These plots suggest that a second assumption, the normality of residuals, is also being violated by our current model. The Q-Q plot suggests that the majority of points do not fall along the straight line and that, as a result, the model is making poorer predictions for those values. Additionally, the density plot does not appear to follow a normal distribution (although a formal test returns a p \> .05).**
+
+```{r}
+performance::check_normality(mod)
+```
 
 ## Outliers
 
