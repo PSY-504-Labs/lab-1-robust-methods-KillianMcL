@@ -4,6 +4,7 @@ format: html
 editor: visual
 execute: 
   message: false
+  warning: false
 ---
 
 # Lab 1-Robust Methods
@@ -31,7 +32,12 @@ execute:
     library(infer) # sample_rep_n function
     library(palmerpenguins) # penguins dataset
 
-
+    #Additional packages
+    library(datawizard) #For Winsorizing
+    library(gridExtra) #For Visualizing
+    library(gt) #For formatted model tables
+    library(lmtest) #For robust standard errors
+    library(sandwich) #For robust standard errors
     ```
 
 ## Robust Correlations
@@ -46,9 +52,59 @@ Use the `stars` data in `robustbase`. This data looks at the relationship betwee
 
     a\. Plot the data and describe the pattern seen. What is Pearson's *r*?
 
+    ```{r}
+    stars %>% ggplot(aes(log.Te, log.light)) +
+      geom_point(size = 4, alpha = .75) +
+      geom_smooth(method = 'lm', se = FALSE, color = '#84a59d') +
+      ggtitle("Scatter Plot of Light Intensity and Surface Temperature") +
+      ylab("Light Intensity") +
+      xlab("Surface Temperature")
+    ```
+
+    **From** **visual inspection of the scatter plot, it appears as though there may be a positive linear** **relationship between light intensity and surface temperature, such that as one increases so does the** **other. However, the presence of potential outliers, particularly in the upper left quadrant (high** **light intensity, but low surface temperature) is likely distorting that relationship. The line of** **best fit suggests that the outliers are causing the suprious appearance of a negative correlation;** **light intensity decreasing as surface temperature increases. Pearson's r adds more evidence to this** **suspicion:**
+
+    ```{r}
+    cor.test(stars$log.Te, stars$log.light, method = c("pearson"))
+    ```
+
+    **The test returns a (non-significant) negative correlation.**
+
     b\. Re-run the correlation, but this time use the winsorized r (20%). Do this manually and then with the correlation::correlation function from `easystats`.
 
+    ```{r}
+    #Manual Winsorizing
+    stars_win = stars %>% dplyr::summarise(log.Te_win = datawizard::winsorize(log.Te),
+                                           log.light_win = datawizard::winsorize(log.light))
+
+    cor.test(stars_win$log.Te_win, stars_win$log.light_win, method = c("pearson"))
+    ```
+
+    ```{r}
+    #Winsorizing using the correlation package
+    correlation::correlation(stars, winsorize = .2)
+    ```
+
     c\. Compare the correlations.
+
+    ```{r}
+    p1 = stars %>% ggplot(aes(log.Te, log.light)) +
+      geom_point(size = 4, alpha = .75) +
+      geom_smooth(method = "lm", se = FALSE, color = '#84a59d') +
+      ggtitle("Raw Values") +
+      ylab("Light Intensity") +
+      xlab("Surface Temperature")
+
+    p2 = stars_win %>% ggplot(aes(log.Te_win, log.light_win)) +
+      geom_point(size = 4, alpha = .75) +
+      geom_smooth(method = "lm", se = FALSE,  color = '#84a59d') +
+      ggtitle("Winsorized Values") +
+      ylab("Light Intensity") +
+      xlab("Surface Temperature")
+
+    grid.arrange(p1, p2, ncol = 2)
+    ```
+
+**Both of the Winsorized correlations reveal a significant, positive correlation between light intensity and surface temperature This contrasts with the non-significant, negative correlation returned when using the raw values. This suggests that the outliers in the raw data are distorting the true relationship.**
 
 ## Bootstrapping and Permutations
 
@@ -56,29 +112,149 @@ Use the `stars` data in `robustbase`. This data looks at the relationship betwee
 
     a\. Bootstrap the mean (using the `boot` package) and plot the histogram with `ggplot2`
 
+    ```{r}
+    data = c(8.453532, 10.025041, 11.495339, 9.367600, 8.333229, 9.788753, 10.883344, 10.543059, 9.869095, 10.799819)
+
+    mean_func = function(data, indices) {
+      return(mean(data[indices]))
+    }
+
+    result = boot(data, mean_func, R = 10000) 
+
+    boot_means = data.frame(mean = result$t)
+
+    boot_means %>% ggplot(aes(mean)) +
+      geom_histogram(bins = 30) +
+      ggtitle("Bootstrapped Mean Distribution") +
+      xlab("Mean") +
+      ylab("Frequency")
+    ```
+
     b\. Bootstrap the median (using the `boot` package) and plot the histogram with `ggplot2`
+
+    ```{r}
+    mdn_func = function(data, indices) {
+      return(median(data[indices]))
+    }
+
+    result_mdn = boot(data, mdn_func, R = 10000) 
+
+    boot_mdns = data.frame(mdn = result_mdn$t)
+
+    boot_mdns %>% ggplot(aes(mdn)) +
+      geom_histogram(bins = 30) +
+      ggtitle("Bootstrapped Median Distribution") +
+      xlab("Median") +
+      ylab("Frequency")
+    ```
 
     c\. For the mean bootstraps, plot the 95% confidence intervals (percentile and bca) ) along with the mean. Use `geom_vline annotate` to mark the lines noting what they represent.
 
+    ```{r}
+    percentile_ci = boot.ci(result, type = "perc", conf = .95)
+    bca_ci = boot.ci(result, type = "bca", conf = .95)
+
+    boot_means %>% ggplot(aes(mean)) +
+      geom_histogram(bins = 30, fill = "#6A5B6E") +
+      ggtitle("Bootstrapped Mean Distribution with Confidence Intervals (Percentile and BCA)") +
+      xlab("Mean") +
+      ylab("Frequency") +
+      geom_vline(xintercept = mean(result$t), color = "#84a59d", linetype = "solid", linewidth = .75) +
+      geom_vline(xintercept = percentile_ci$percent[4], color = "#f6bd60", linetype = "dashed", linewidth = .75) +
+      geom_vline(xintercept = percentile_ci$percent[5], color = "#f6bd60", linetype = "dashed", linewidth = .75) + 
+       geom_vline(xintercept = bca_ci$bca[4], color = "#f28482", linetype = "dotdash", linewidth = .75) +
+      geom_vline(xintercept = bca_ci$bca[5], color = "#f28482", linetype = "dotdash", linewidth = .75) + 
+      annotate("text", x = mean(result$t) - .1, y = max(table(result$t)) + 1000, label = "Mean", color = "#84a59d", size = 3.75) +
+      annotate("text", x = percentile_ci$percent[4] + .2, y = max(table(result$t)) + 1000, label = "Percentile CI", color = "#f6bd60", size = 3.75) +
+      annotate("text", x = bca_ci$bca[4] - .125, y = max(table(result$t)) + 1000, label = "BCA CI", color = "#f28482", size = 3.75) +
+      theme(panel.background = element_rect(fill = "transparent"))
+    ```
+
     d\. For the median bootstraps, plot the 95% confidence intervals (Percentile and BCa). Use `geom_vline and annotate` to mark the lines noting what they represent.
+
+    ```{r}
+    percentile_ci_mdn = boot.ci(result_mdn, type = "perc", conf = .95)
+    bca_ci_mdn = boot.ci(result_mdn, type = "bca", conf = .95)
+
+    boot_mdns %>% ggplot(aes(mdn)) +
+      geom_histogram(bins = 30, fill = "#6A5B6E") +
+      ggtitle("Bootstrapped Median Distribution with Confidence Intervals (Percentile and BCA)") +
+      xlab("Median") +
+      ylab("Frequency") +
+      geom_vline(xintercept = percentile_ci_mdn$percent[4], color = "#f6bd60", linetype = "dashed", linewidth = .75) +
+      geom_vline(xintercept = percentile_ci_mdn$percent[5], color = "#f6bd60", linetype = "dashed", linewidth = .75) + 
+       geom_vline(xintercept = bca_ci_mdn$bca[4], color = "#f28482", linetype = "dotdash", linewidth = .75) +
+      geom_vline(xintercept = bca_ci_mdn$bca[5], color = "#f28482", linetype = "dotdash", linewidth = .75) + 
+      annotate("text", x = percentile_ci_mdn$percent[4] + .275, y = max(table(result_mdn$t)) + 1500, label = "Percentile CI", color = "#f6bd60", size = 3.75) +
+      annotate("text", x = bca_ci_mdn$bca[4] - .175, y = max(table(result_mdn$t)) + 1500, label = "BCA CI", color = "#f28482", size = 3.75) +
+      theme(panel.background = element_rect(fill = "transparent"))
+    ```
 
 3.  You want to test whether the following paired samples are significantly different from one another: pre = \[22,25,17,24,16,29,20,23,19,20\], post = \[18,21,16,22,19,24,17,21,23,18\]. Often researchers would run a paired sampled t-test, but you are concerned the data does not follow a normal distribution.
 
     a.  Calculate the paired differences, that is post - pre, which will result in a vector of paired differences (pdiff0 = post - pre)
 
+    ```{r}
+    pre = c(22,25,17,24,16,29,20,23,19,20)
+    post = c(18,21,16,22,19,24,17,21,23,18)
+
+    pdiff0 = post-pre
+    ```
+
     b\. Calculate the mean of the paired differences (Xpdiff0)
+
+    ```{r}
+    Xpdiff0 = mean(pdiff0)
+    ```
 
     d\. Bootstrap b) with replacement (pdiff1) and plot the histogram with `ggplot2`.
 
+    ```{r}
+    pdiff1 = boot(pdiff0, mean_func, R = 10000)
+    ```
+
     e\. Calculate the 95% confidence intervals (BCa). What can you infer from this?
 
+    ```{r}
+    pdiff1_bca = boot.ci(pdiff1, type = "bca", conf = .95)
+    pdiff1_bca
+    ```
+
+    **The confidence interval overlaps 0: the lower bound is negative, while the upper bound is positive. The implication of the overlap is that we might fail to reject the null hypothesis (H0: there is no mean difference between the pre and post measures).**
+
     f\. Plot bootstrap mean along with 95% CIs (with `ggplot2`). Use annotate to note what the vertical lines represent.
+
+    ```{r}
+    pdiff1_mean_dist = data.frame(mean = pdiff1$t)
+
+    pdiff1_mean_dist %>% ggplot(aes(mean)) +
+      geom_histogram(bins = 30, fill = "#6A5B6E") +
+      ggtitle("Bootstrapped Mean Distribution with Confidence Intervals (BCA)") +
+      ylab("Frequency") +
+      xlab("Mean") +
+      geom_vline(xintercept = mean(pdiff1$t), color = "#84a59d", linetype = "solid", linewidth = .75) + 
+       geom_vline(xintercept = pdiff1_bca$bca[4], color = "#f28482", linetype = "dashed", linewidth = .75) +
+      geom_vline(xintercept = pdiff1_bca$bca[5], color = "#f28482", linetype = "dashed", linewidth = .75) + 
+      annotate("text", x = mean(pdiff1$t) - .25, y = max(table(pdiff1$t)) + 1000, label = "Mean", color = "#84a59d", size = 3.75) +
+      annotate("text", x = pdiff1_bca$bca[4] - .4, y = max(table(pdiff1$t)) + 1000, label = "CI (BCA)", color = "#f28482", size = 3.75) +
+      theme(panel.background = element_rect(fill = "transparent"))
+    ```
 
 4.  Pepper Joe measured the length and heat of 85 chili peppers. He wants to know if smaller peppers are hotter than longer peppers.
 
     ```{r}
     #read data.table to read in
-    chili<- read.delim("/Users/jasongeller/Documents/03-Robust_Methods/data/chillis.csv")
+    chili<- read.delim("https://raw.githubusercontent.com/jgeller112/psy504-advanced-stats/main/slides/03-Robust_Methods/data/chillis.csv")
+
+    boot.function <- function(data, indices) {
+    resampled_data = data[indices,]
+    model<-glm(HEAT ~ LENGTH, data = resampled_data)
+    return(coefficients(model))
+    }
+
+    chili_results <- boot(chili, boot.function, R = 10000)
+
+    boot.ci(chili_results, type = "bca", R = 10000)
     ```
 
 5.  Some species display sexual size dimorphism -- in which one sex is on average larger than the other. Such a pattern can tell us about the species' ecology and mating habits. Do penguins display this sex difference in size? Let's just look at a subset of the palmerpenguins data set, which we'll call `my_penguins`.
@@ -93,26 +269,73 @@ Use the `stars` data in `robustbase`. This data looks at the relationship betwee
 
 a\. Visualize body size by sex
 
+```{r}
+my_penguins %>% ggplot(aes(sex, body_mass_g, color = sex)) +
+  geom_point(position = position_jitter(width = .15, height = 0), size = 4, alpha = .65) +
+  scale_fill_manual(values = c("#ff006e", "#3a86ff")) +
+  ylab("Body Mass (g)") +
+  xlab("Sex")
+```
+
 b\. Calculate the original mean difference between sex
+
+```{r}
+sample_diff = my_penguins %>% 
+  specify(body_mass_g ~ sex) %>%
+  calculate(stat = "diff in means", order = c("male", "female"))
+
+sample_diff$stat
+```
 
 c\. Permute the group labels (10000x)
 
+```{r}
+null_dist = my_penguins %>% 
+  specify(body_mass_g ~ sex) %>%
+  hypothesize(null = "independence") %>%
+  generate(reps = 10000, type = "permute") %>%
+  calculate(stat = "diff in means", order = c("male", "female"))
+```
+
 d\. Plot the null-hypothesis distribution (NHD) for the difference
 
+```{r}
+null_dist %>%
+  visualize() + shade_p_value(obs_stat = sample_diff, direction = "two-sided")
+```
+
 e\. Compare the observed mean difference to the NHD (is *p* \< .05?)
+
+```{r}
+null_dist %>%
+  get_p_value(obs_stat = sample_diff, direction = 'two-sided')
+```
+
+**p \< .05**
 
 6.  Suppose a replication experiment was conducted to further examine the interaction effect between driving difficulty and conversation difficulty on driving errors in a driving simulator. In the replication, the researchers administered the same three levels of conversation difficulty; (1) control, (2) easy, (3) difficult (C, E, D) but assume that they added a third level of driving difficulty; (1) low, (2) moderate, (3) difficult (L, M, D). Assume the design was completely between subjects and conduct a factorial ANOVA to test the main effects of conversation and driving difficulty as well as the interaction effect. The DV is the number of errors committed in the driving simulator.
 
     ```{r}
-    library(tidyverse)
     fac_data<-read_csv("https://raw.githubusercontent.com/jgeller112/psy503-psych_stats/master/static/assignment/data/fact_final.csv")
 
+    #Fit the model
+    model = aov(errors ~ convo * drive, data = fac_data)
 
+    #Output the results
+    model %>% 
+      broom::tidy() %>%
+      gt
     ```
 
     a\. Run a permutation test (ANOVA)
 
+    ```{r}
+    permuco::aovperm(errors ~ convo * drive, data = fac_data, np = 10000, type = "permutation")
+    ```
+
     b\. How would you follow-up significant effects in this context?
+
+    **To follow-up the significant main effects in the model, we could explore the nature of the effects by conducting post-hoc tests. For instance, we could conduct pairwise comparisons between the levels of conversation difficulty to determine which specific levels of conversation difficulty are significantly different from each other in terms of the mean number of driving errors. Similarly, we could conduct pairwise comparisons between the levels of driving difficulty to determine which specific levels are significantly different from each other. We could also examine the effect sizes of the main effects and compare the magnitude of the main effects to determine which ones are more important to predicting the number of driving errors. Lastly, we could visualize the main effects (e.g., using box or rain plots) to assist our understanding of the main effects.**
 
 ## Robust Linear Models
 
@@ -128,10 +351,79 @@ df <- data.frame(hours=c(1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4,
 
 a\. Use the lm() function to fit a regression model in R that uses **hours** as the predictor variable and **score** as the response variable
 
+```{r}
+mod = lm(score ~ hours, data = df)
+
+mod %>% 
+  broom::tidy() %>%
+  gt()
+```
+
 b\. Interpret the results
 
-c\. Check assumptions and report which ones failed (include plots)
+**The results of the model suggest that exam scores increase by 1.95 for each additional hour spent studying. However, the increase is not significant (p = 0.09).**
+
+**Marginal effect**
+
+c\. Check assumptions and report which assumptions are violated (include stats or plots)
+
+## (Residual) Linearity and Homoscedasticity
+
+```{r}
+#1 - Residual linearity and homoscedasticity
+performance::check_model(mod, check = c("linearity", "homogeneity"))
+```
+
+**The plots above suggest that the assumptions of (residual) linearity and homoscedasticity are not met by the data. The residuals and the predicted values do not fall along a straight line. In other words, the model has larger errors at different predicted values. The violation of the linearity assumption can also be read from a scatter plot of the *raw* values of the DV and IV:**
+
+```{r}
+df %>% ggplot(aes(hours, score)) +
+  geom_point(size = 4) +
+  geom_smooth(method = "loess", se = FALSE, color = '#84a59d') +
+  ggtitle("Scatter Plot of Exam Scores and Hours Spent Studying") +
+  ylab("Exam Score") +
+  xlab("Hours")
+```
+
+**Formal tests reveal that the assumption is violated**:
+
+```{r}
+performance::check_heteroscedasticity(mod)
+```
+
+## Normality of Residuals
+
+```{r}
+#Normality of residuals
+performance::check_model(mod, check = c("qq", "normality"))
+```
+
+**These plots suggest that a second assumption, the normality of residuals, is also being violated by our current model. The Q-Q plot suggests that the majority of points do not fall along the straight line and that, as a result, the model is making poorer predictions for those values. Additionally, the density plot does not appear to follow a normal distribution (although a formal test returns a p \> .05).**
+
+```{r}
+performance::check_normality(mod)
+```
+
+## Outliers
+
+```{r}
+performance::check_model(mod, check = "outliers")
+```
+
+**While an absence of outliers is not an assumption of linear models *per se*, it is good practice to examine the data for their presence. The plot above suggests that one influential case may be causing trouble for our model (red point, outside lower dashed contour).**
+
+**As we are dealing with only one predictor, we need not be concerned with the no multicolinearity assumption and (assuming the data is between-subjects) the independence of observations assumption.**
 
 d\. Re-run the lm you saved above, but with robust standard errors
 
+```{r}
+mod_robust = coeftest(mod, vcov = vcovHC(mod, type = "HC0"))
+
+mod_robust %>% 
+  broom::tidy() %>%
+  gt()
+```
+
 e\. What differences do you notice between the regular regression and the regression with robust SEs applied?
+
+**Compared to the original model with a standard error of 1.075, the new model with robust standard errors reports a standard error of 1.207, an increase of 0.132. Our assumption tests for the original model revealed the presence of heteroscedasticity. Therefore, the standard error in the new model is likely more accurate. Confidence intervals should be calculated based on the robust standard errors.**
